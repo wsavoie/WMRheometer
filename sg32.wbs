@@ -1,0 +1,1239 @@
+Sub Main()
+dim cc as integer
+	for cc = 1 to 1
+		
+		'WM.RunScript "D:\wkMdl_scripts\sg32.wbs"
+		'freq,numbodies,lparts (-1 = max_grains)
+		'freq		=6%
+		'numbods	=25%
+		'lparts		=true
+
+		temp=USim(5,20,true)
+		Sleep 10000
+		WM.ActiveDocument.Close
+	next 
+End Sub
+
+Function USim(freq as Integer, bodies as Integer, lp as boolean)
+'to get lparts (.*'semicolon')
+'RME\1
+	const MOTORS_ON = false
+	const num_tri = 3
+	const SPRING_K				= .5		'spring k val
+	const SPRING_B				= 0		'damping value
+	const W_UBOTT				= .75/2						' UBott width in cm
+	const H_UBOTT	 			= .1/2					' UBott length in cm
+	const M_UBOTT				= .5		' UBott mass
+
+	
+	dim MAX_GRAINS as boolean
+	dim NUM_BODY as INTEGER
+	if bodies = -1 then
+		MAX_GRAINS = true
+	else
+		MAX_GRAINS = false
+		NUM_BODY = bodies
+	end if
+	dim lparts as boolean 
+	lparts = lp
+	
+' replace back to U shape:  -> ""
+	'Key consts for sim
+	const circles 			= true
+	const dens					= 25		' density of metal in particles
+	const SHOW_DETAILS          = false  	' show springs, dampers, strings
+	const SHOW_METERS         	= false 	' show input and output meters
+	const FRAMES 				= 600
+	
+	const SPF					= .05		'seconds per frame
+	'UBott consts 	
+
+
+	const FRICTION				= 0						'default was .3 for both static&kinetic
+	const ELAST					= 0
+	'barb consts
+
+	const M_BARB				= .5
+	const W_BARB				= H_UBOTT				' barb width in cm
+	const H_BARB				= W_UBOTT				' barb length in cm
+	const sweep 				= 30					' barb angle deflect from vertical
+	const S_BARB				= .2					' barb sweep speed in cm/s
+	const CIRCLE_RAD			= W_BARB/2				' radius of circle on end of barbs
+	
+	'wall grabbers consts
+
+	const W_Vgrab				= .1		' width of vertical grabber
+	const H_Vgrab				= .3		' height of vertical grabber
+	const W_Hgrab				= .45		' width of horiz grabber 
+	const H_Hgrab				= .1		' height of horiz grabber
+	const GRABBER_AMT			= 10		' amount of wall grabbers
+	const M_grab				= 1/(GRABBER_AMT*2)		' mass of whole grabber
+	'spring constants
+
+	const RWallSpring_K			= 10000
+	const RWallSpring_B			= 10000
+
+	'wall and arena size consts
+
+	const RWall_spd				= 3
+	const stepspd				= .5 				'speed of step
+	const stepAMT				= 1					'amt of steps wall makes
+	const waitframes 			= 50				'wait in frames between each step
+	const W_ARENA				= 12					' width of arena
+	const H_ARENA 				= 4
+	const M_WALL				= 1					' mass of wall
+	const W_WALL				= .2				' width of wall
+	const H_WALL				= H_ARENA			' height of wall	
+	const tri_height 			= w_wall/2
+	const tri_mass				= 1
+	const springsq_mass			= .01
+	const circle_mass			= .01
+	const W_OARENA				= W_ARENA-2*tri_height	' width of open area in arena
+	const H_OARENA				= H_ARENA-2*W_wall	' width of open area in arena
+	const H_LWall				= 2*H_WALL
+	dim WALL_FREQ as integer
+	WALL_FREQ					= freq					' wall motor freq
+	const GRAVITY				= 9.8*0
+	
+
+
+	dim RunNumber as INTEGER
+	dim runTotal as INTEGER
+	runTotal = 1	'total number of runs to do
+	RunNumber = 1	'counter
+	const EXPORT 			= 1
+	const makeGrabbers		= false
+	const makeRGrabbers		= false
+	
+	const oscTri	   		= true
+		const leftWalltri  	= false
+		const rightWalltri 	= true
+		
+	dim radius 							' = (W_UBOTT*W_UBOTT/4+H_Barb*H_Barb)^(1/2) '1.1 for extra room
+	dim Arena_cols 							' = Fix(W_OARENA/(2*radius))
+	dim Arena_rows							'	 = fix(H_OARENA/(2*radius))
+	dim Arena_spots 						'= Arena_cols*Arena_rows
+
+	
+	'=======================Create Square Lattice =====================	
+	radius = (W_UBOTT*W_UBOTT/4+H_Barb*H_Barb*1.1)^(1/2) '1.1 for extra room
+	Arena_cols = Fix(W_OARENA/(2*radius)-W_BARB)
+	Arena_rows = fix(H_OARENA/(2*radius)-W_BARB)
+	Arena_spots = Arena_cols*Arena_rows
+	dim spots(Arena_spots) as double
+
+	'!@#$%^&*()(*&^%$#@GIVE ARENA INFO
+	'msgbox("Arena_cols:"+LTrim$(str$(Arena_cols))+" Arena_rows:" + LTrim$(str$(Arena_rows)))
+	
+	
+	if MAX_GRAINS then
+		NUM_BODY = Arena_spots
+	end if
+	
+	'1-(2.5*H_BARB/w_Arena) 'will contract to 2.5*width of barbs
+	dim wallPercent as double
+	dim wall_move_distance as double
+	
+	if lparts then
+		'wallPercent 		= fix(3.2/24*num_body*1000)/1000 +.4
+		wallPercent			= fix((num_body/Arena_rows)*.25*1000)/1000+.5
+	else
+		'wallPercent 		= fix(3.2/24*num_body*1000)/1000 +.3
+		wallPercent			= fix((num_body/Arena_rows)*.25*1000)/1000+.3
+	end if
+	'msgbox(wallPercent)
+	WALL_MOVE_DISTANCE= 1-(WallPercent*H_BARB/w_Arena)'13/16 ' percentage of horizontal wall length to move
+	'============================Setup Document===========================  
+	dim doc as WMdocument
+	Dim oscFieldFormula as String
+	Dim LWall as WMBody
+	Dim RWall as WMBody					'walls	
+	Dim LWallpt as WMPoint
+	'Dim RWallpt as WMPoint						'Rwall point anchor
+	Dim TWall as WMBody
+	Dim BWall as WMBody					'walls	
+	Dim TWallpt as WMPoint
+	Dim BWallpt as WMPoint						'wall points
+
+	Dim LBarbCircle(NUM_BODY) as WMBody
+	Dim LBarbCircleJt(NUM_BODY) as WMConstraint
+	Dim RBarbCircle(NUM_BODY) as WMBody
+	Dim RBarbCircleJt(NUM_BODY) as WMConstraint
+		
+	Dim LWallSlot as WMConstraint
+	Dim RWallSlot as WMConstraint
+	Dim SquareSlot as WMConstraint
+	Dim WallForce as WMConstraint
+	Dim WallOscillator as WMConstraint
+	Dim RWallPusher as WMConstraint
+
+	Dim LBarb(NUM_BODY) as WMBody
+	Dim UBott(NUM_BODY)	as WMBody	'declare U body parts
+	Dim LSpringSq(NUM_BODY) as WMBody
+	
+	if not lparts then
+		Dim RBarb(NUM_BODY) as WMBody ';'
+		Dim RSpringSq(NUM_BODY) as WMBody ';'
+		Dim RSpring(NUM_BODY) as WMconstraint ';'
+		Dim RMotor(NUM_BODY) as WMconstraint ';'		'motors
+	end if
+
+	
+	Dim LSpring(NUM_BODY) as WMconstraint
+	Dim LMotor(NUM_BODY) as WMconstraint
+
+	
+	Dim rndForce(NUM_BODY) as WMConstraint	   'random initial force
+	
+	Dim RgrabJnt(GRABBER_AMT) as WMConstraint									'declare joint for wall grabber
+	Dim Rgrab_to_walljnt(GRABBER_AMT) as WMConstraint							'declare joint for wall to grab
+	Dim RVGrab(GRABBER_AMT) as WMBody
+	Dim RHGrab(GRABBER_AMT) as WMBody			'declare wall grabber pieces
+
+	Dim VGrab(GRABBER_AMT) as WMBody
+	Dim HGrab(GRABBER_AMT) as WMBody			'declare wall grabber pieces
+
+	Dim RWallSquare as WMBody 
+	Dim RWallMeasure as WMConstraint
+
+	Dim grabJnt(GRABBER_AMT) as WMConstraint									'declare joint for wall grabber
+	Dim grab_to_walljnt(GRABBER_AMT) as WMConstraint							'declare joint for wall to grab
+	Dim testjnt as WMConstraint													'declare joint for test constrs
+	Dim Top_Tri as WMBody
+	Dim Bott_Tri as WMBody
+	Dim Top_Tri_pt as WMPoint
+	Dim Bott_Tri_pt as WMPoint
+	
+	Dim RTop_Tri as WMBody
+	Dim RBott_Tri as WMBody
+	Dim RTop_Tri_pt as WMPoint
+	Dim RBott_Tri_pt as WMPoint
+	Dim walltri(num_tri) as WMBody
+	Dim Rwalltri(num_tri) as WMBody
+	Dim Tri_jnts(num_tri)	 as WMConstraint
+	Dim RTri_jnts(num_tri+1)	 as WMConstraint 
+	
+	Dim Meter1 as WMOutput
+	Dim Meter2 as WMOutput
+	dim waittime as double
+	dim lwallmass as double
+	dim amp_max as double
+	dim triwidth as double
+	dim walloscLen as double
+	set doc                 = WM.new()
+	doc.unitsystem          = "si degrees"
+	doc.scalefactor         = 1.5/(H_Arena*W_Arena) ' want screen body size at 0.08 m
+	doc.showcoordinates     = true ' false
+	doc.showtapecontrol     = true ' false
+	doc.showscrollbars      = true ' false
+	doc.scrollto               W_Arena,-H_Arena/2
+	Doc.Gravity = "linear"
+    Doc.LinearGravityConst=GRAVITY
+	Doc.WarnInconsistent 	= false
+	WinSize 498*Screen.TwipsPerPixelX, 148*Screen.TwipsPerPixelY   
+	
+	'===== rwall stagger consts
+	Dim timestepMove(FRAMES) as Double
+	dim VConstMoveFrames as Integer
+	dim StepStart as integer
+	dim stepD as integer
+	'gosub make_frame_array
+'=======================Create Arena Walls and Grabbers=====================
+	gosub CreateWallsAndGrabbers
+'=======================Create Bodies =====================	
+	For j = 1 to NUM_BODY
+		Randomize
+		rot = Random(0,360)
+		'randomize location between lwall px, rWall px and wall height limit and 
+	'==========declare bodies========
+		Set LBarb(j) 				= Doc.NewBody("rectangle")
+		Set UBott(j) 				= Doc.NewBody("rectangle")
+		Set LSpringSq(j)			= Doc.NewBody("square")
+
+		Set LSpring(j)				= Doc.NewConstraint("rspring")
+
+		Set LMotor(j) 				= Doc.NewConstraint("motor")
+		
+		if not lparts then
+			Set RBarb(j) 				= Doc.NewBody("rectangle") ';'
+			Set RSpringSq(j)			= Doc.NewBody("square") ';'
+			Set RSpring(j)				= Doc.NewConstraint("rspring") ';'
+			Set RMotor(j)				= Doc.NewConstraint("motor") ';'
+		end if
+		
+		if circles then
+			Set LBarbCircle(j)			= Doc.NewBody("Circle")
+			Set LBarbCircleJt(j)		= Doc.newconstraint("squarepin")
+			Set RBarbCircleJt(j)		= Doc.newconstraint("squarepin")
+			Set RBarbCircle(j)			= Doc.NewBody("Circle")
+		end if
+		
+		
+'=========turn of collisions for barbs and spring squares======
+		'unselect all things
+		Doc.selectall false
+	
+		'make left side stuff not collide
+		Doc.select LBarb(j), true
+		Doc.select LSpringSq(j), true
+		Doc.select Ubott(j), true
+		Doc.Collide false
+		Doc.selectall false
+	
+		'make right side stuff not collide
+		if not lparts then
+			Doc.select RBarb(j), true ';'
+			Doc.select RSpringSq(j), true ';'
+		end if
+		Doc.select Ubott(j), true
+		Doc.Collide false
+		Doc.selectall false
+		
+'======create barbs and springSquares=========
+		Randomize
+		'blen = Random(H_Barb-.25*h_barb,h_barb+.25*H_barb)
+		B_LEN = H_BARB+.25*H_BARB*(rnd()-.5)*2
+		'left barb
+		LBarb(j).Height.Value 			= B_LEN'H_BARB 
+		LBarb(j).Width.Value 			= W_BARB
+		LBarb(j).name 					= "LBarb("+LTrim$(str$(j))+")"
+		LBarb(j).mass.value				= M_BARB 
+		LBarb(j).staticfriction.value	= FRICTION
+		LBarb(j).kineticfriction.value	= FRICTION
+		LBarb(j).elasticity.value		= ELAST
+		
+		'connecting UBott piece
+		UBott(j).Height.Value 			= H_UBOTT
+		'uBott(j).height.formula			= .2+time
+		UBott(j).Width.Value 			= W_UBOTT
+		UBott(j).name 					= "UBott("+LTrim$(str$(j))+")"
+		UBott(j).mass.value				= M_BARB
+		UBott(j).staticfriction.value	= FRICTION
+		UBott(j).kineticfriction.value	= FRICTION
+		UBott(j).elasticity.value		= ELAST
+		'right barb
+		if not lparts then
+			RBarb(j).Height.Value 			= B_LEN'H_BARB   ';'
+			RBarb(j).Width.Value 			= W_BARB ';'
+			RBarb(j).name 					= "RBarb("+LTrim$(str$(j))+")" ';'
+			RBarb(j).mass.value				= M_BARB ';'
+			RBarb(j).staticfriction.value	= FRICTION ';'
+			RBarb(j).kineticfriction.value	= FRICTION ';'
+			RBarb(j).elasticity.value		= ELAST ';'
+		end if
+		'========Connect circles to barbs====================
+		if circles then
+			gosub ConnectLRBarbCircles
+		end if		
+		
+		if not lparts then
+			RBarb(j).Pr.value		= rot ';'
+		end if
+		UBott(j).Pr.value		= rot
+		LBarb(j).Pr.value		= rot
+'=========Spring Square creation===================
+		'LSpringSq
+		LSpringSq(j).height.value 			= W_BARB
+		LSpringSq(j).name		  			= "LSpringSq("+LTrim$(str$(j))+")"
+		LSpringSq(j).Pr.value				= rot
+		LSpringSq(j).mass.value				= springsq_mass
+		LSpringSq(j).staticfriction.value	= FRICTION
+		LSpringSq(j).kineticfriction.value	= FRICTION
+		LSpringSq(j).elasticity.value		= ELAST
+		
+		'RSpringSq
+		if not lparts then
+			RSpringSq(j).height.value 			= W_BARB ';'
+			RSpringSq(j).name		  			= "RSpringSq("+LTrim$(str$(j))+")" ';'
+			RSpringSq(j).Pr.value				= rot ';'
+			RSpringSq(j).mass.value				= springsq_mass ';'
+			RSpringSq(j).staticfriction.value	= FRICTION ';'
+			RSpringSq(j).kineticfriction.value	= FRICTION ';'
+			RSpringSq(j).elasticity.value		= ELAST ';'
+		end if
+
+'========Create Circles on end of staple barbs=======
+		if circles then
+			LBarbCircle(j).radius.value 		= CIRCLE_RAD
+			LBarbCircle(j).name					= "LBarbCircle("+LTrim$(str$(j))+")" 
+			LBarbCircle(j).mass.value			= circle_mass
+			LBarbCircle(j).pr.value				= rot
+			LBarbCircle(j).staticfriction.value	= FRICTION
+			LBarbCircle(j).kineticfriction.value= FRICTION
+			LBarbCircle(j).elasticity.value		= ELAST
+			
+			RBarbCircle(j).radius.value			= CIRCLE_RAD
+			RBarbCircle(j).name					= "RBarbCircle("+LTrim$(str$(j))+")"
+			RBarbCircle(j).mass.value			= circle_mass
+			RBarbCircle(j).staticfriction.value	= FRICTION
+			RBarbCircle(j).kineticfriction.value= FRICTION
+			RBarbCircle(j).elasticity.value		= ELAST
+			RBarbCircle(j).pr.value				= rot
+		end if
+		
+'========initialize springs and motors params========
+		'LSpring 
+		LSpring(j).name					="LSpring("+LTrim$(str$(j))+")"
+		LSpring(j).k.value				= SPRING_K	 'SPRING K
+		LSpring(j).DamperK.value		= SPRING_B	 'SPRING K	
+		LSpring(j).show					= SHOW_DETAILS
+		'L motors
+		LMotor(j).name 					= "LMotor("+LTrim$(str$(j))+")"
+		LMotor(j).Motortype				="velocity"
+		LMotor(j).show					= SHOW_DETAILS
+		
+		'RSpring
+		if not lparts then
+			RSpring(j).name					="RSpring("+LTrim$(str$(j))+")" ';'
+			RSpring(j).k.value				= SPRING_K	 'SPRING K ';'
+			RSpring(j).DamperK.value		= SPRING_B	 'SPRING K ';'
+			RSpring(j).show					= SHOW_DETAILS ';'
+			'R motors
+			RMotor(j).name 					= "RMotor("+LTrim$(str$(j))+")" ';'
+			RMotor(j).Motortype				="velocity" ';'
+			RMotor(j).show					= SHOW_DETAILS ';'
+		end if
+
+'=========Set attachments of springs and motors=========
+		'LSPRINGS AND LMOTORS
+		Set LSpring(j).point(1).body 	= LBarb(j)
+		Set LSpring(j).point(2).body 	= LSpringSq(j)
+		LSpring(j).point(1).px.value 	= 0
+		LSpring(j).point(1).py.value 	= -(LBarb(j).Height.Value-UBott(j).Height.Value)/2
+		LSpring(j).point(2).px.value 	= 0
+		LSpring(j).point(2).py.value	= 0
+		
+		Set LMotor(j).Point(1).Body 	= LSpringSq(j)
+		Set LMotor(j).Point(2).Body 	= UBott(j)
+		LMotor(j).Point(1).px.value		= 0
+		LMotor(j).Point(1).py.value		= 0
+		LMotor(j).Point(2).px.value		=(W_Barb-W_UBOTT)/2
+		LMotor(j).Point(2).py.value		=0
+		
+		
+		'RSPRINGS AND R MOTORS
+		if not lparts then
+			Set RSpring(j).point(1).body	= RBarb(j) ';'
+			Set RSpring(j).point(2).body	= RSpringSq(j) ';'
+					
+			RSpring(j).point(1).px.value 	= 0 ';'
+			RSpring(j).point(1).py.value 	= -(B_LEN-H_UBOTT)/2 ';'
+			RSpring(j).point(2).px.value 	= 0 ';'
+			RSpring(j).point(2).py.value	= 0 ';'
+			
+			Set RMotor(j).Point(1).Body		= RSpringSq(j) ';'
+			Set RMotor(j).Point(2).Body		= UBott(j) ';'
+			RMotor(j).Point(1).px.value		= 0 ';'
+			RMotor(j).Point(1).py.value		= 0 ';'
+			RMotor(j).Point(2).px.value		= -(W_Barb-W_UBOTT)/2 ';'
+			RMotor(j).Point(2).py.value		= 0 ';'
+			RSpring(j).rotation.value		= RSpring(j).currentrotation ';'
+		end if
+		LSpring(j).rotation.value		= LSpring(j).currentrotation
+		 
+'========give motors and initial random force==========
+		'give barb motors force formula
+		if MOTORS_ON then
+			if not lparts then
+				RMotor(j).Field.Formula = "cos(t*8+pi)*100" ';'
+			end if
+			LMotor(j).Field.Formula = "-cos(t*8+pi)*100"
+		else
+			if not lparts then
+				RMotor(j).Field.Formula = "0" ';'
+			end if
+			LMotor(j).Field.Formula = "0"
+		end if
+				
+		set rndForce(j) 				= Doc.newConstraint("Force")
+		set rndForce(j).Point(1).body 	= UBott(j)
+		
+		rndForce(j).point(1).px.value 	= 0
+		rndForce(j).point(1).py.value 	= 0
+		rndForce(j).AlwaysActive		= True
+	
+		rndForce(j).fx.formula			= LTrim$(str$(Random(-5,5)))+"*(t<1)" 'gives initial random direction
+		rndForce(j).fy.formula			= LTrim$(str$(Random(-5,5)))+"*(t<1)"
+		'rndForce(j).fx.formula			= "-9.8" 'gives initial random direction
+	
+
+'=================STAPLE SPOT PLACEMENT==============
+		filled = 0
+		'find location for UBott
+		rotrad = rot*pi/180
+		if MAX_GRAINS then
+			spot_check = 0
+			do
+				if spots(spot_check)<> 1 then
+					filled = 1
+					spots(spot_check) = 1
+					UBott(j).px.value = W_HGRAB+(spot_check mod Arena_cols)*(radius*2)+ radius +(B_LEN-W_BARB)*sin(rotrad)/2
+					UBott(j).py.value = -W_WALL/2-(fix(spot_check/Arena_cols)*(radius*2) + radius +(B_LEN-W_BARB)*cos(rotrad)/2)
+				end if
+				spot_check = spot_check+1
+			loop until filled =1
+			
+		else 
+			do
+				Randomize
+				
+				spot_check = random(0,Arena_spots-1)
+				if spots(spot_check) <> 1 then
+					filled = 1
+					spots(spot_check) = 1
+					UBott(j).px.value = W_HGRAB+(spot_check mod Arena_cols)*(radius*2)+ radius +(H_BARB-W_BARB)*sin(rotrad)/2
+					UBott(j).py.value = -W_WALL/2-(fix(spot_check/Arena_cols)*(radius*2) + radius +(H_BARB-W_BARB)*cos(rotrad)/2)
+					'msgbox ("spot=" + str$(spot_check) + " ubott.x=" + str$(UBott(j).px.value) + " ubott.y=" +str$(UBott(j).py.value) + "rot:" + str$(rot)  ) 
+				end if
+			loop until filled =1
+		end if
+	
+	Next
+
+	'Put LWall on vertical slot constraint
+	Set LWallSlot =Doc.NewConstraint("KeyedVSlot")
+    Set LWallSlot.Point(2).Body=LWall
+	LWallSlot.Point(2).px.value			= 0
+    LWallSlot.Point(2).py.value			= 0
+	set LWallSlot.show					= SHOW_DETAILS
+		
+
+'===========wall triangle=====================
+	'gosub walltrisub
+'===========GIVING LWALL A FORCE==============
+	'gosub GiveLWallForce
+'==================PUT RWALL ON A HORIZONTAL SLOT===============
+	gosub MakeRWallHSlot
+'========================PUSH RWALL TOWARDS LWALL===================
+	gosub SetupRWallPushing
+	'gosub PushRWallTowardsLWall
+	gosub StaggeredRWallPush
+'=========================GIVING LWALL VELOCITY==========================
+	wallosc = true
+	if wallOsc = true then
+		gosub GiveLWallVelocity
+	else
+		Set LWallpt		= doc.newpoint("anchor")
+		Set LWallpt.body	= LWall 
+	end if	
+
+'======================Declaration of the output meters===================== 
+
+'==========SET RWALL AND LWALL POS==========
+	LWall.px.value 		= 0
+	LWall.py.value 		= -H_WALL/2
+	RWall.px.value 					= W_ARENA 			'width of arena
+	RWall.py.value 					= LWall.py.value
+'where simulation values are tracked
+	
+	dim oscid as integer 
+	oscid =  RWallMeasure.id
+	dim loscid as integer
+	loscid = WallOscillator.id
+	rid = RWall.id
+	lid = LWall.id
+	Set Meter1=Doc.NewOutput()
+    Meter1.Format="Graph"
+    Meter1.x=700
+    Meter1.Y=10
+    Meter1.width=300
+	Meter1.Column(1).label="Tension |F.x|"
+	meter1.column(2).label="Rwall x position"
+	meter1.column(3).label="Lwall y position"
+    Meter1.Column(1).Cell.Formula="-constraintforce("+LTrim$(str$(oscid))+").x"
+	meter1.column(2).cell.formula = "(Body["+str$(rid)+"].p.x - Body["+str$(lid)+"].p.x)" 'rwall position
+	meter1.column(3).cell.formula = "(Constraint["+str$(loscid)+"].dp.x)-"+str$(walloscLen)
+	Meter1.column(1).autoscale = false
+	meter1.column(1).max = 40
+	meter1.column(1).min = -40
+
+
+    'set meter1.show = SHOW_METERS
+	
+
+	
+	Set Meter2=Doc.NewOutput()
+    Meter2.Format="Graph"
+    Meter2.x=700
+    Meter2.Y=525
+    Meter2.width=300
+	
+    Meter2.Column(1).label="Osc Tension"
+	Meter2.Column(2).label="gamma"
+	Meter2.Column(3).label="sigma"
+	meter2.column(4).label="freq"
+
+	'mass of wall + 2*grabber_amt*mass_grab since there are grabberamt of horiz grabbers and grabberamt of vertical grabbers
+	'Meter2.Column(1).Cell.Formula="constraintforce("+LTrim$(str$(loscid))+").x + "+str$((M_WALL+2*GRABBER_AMT*M_Grab)*wall_freq)+"*sin("+str$(wall_freq)+"*t)"
+	
+	Meter2.Column(1).Cell.Formula="constraintforce("+LTrim$(str$(loscid))+").x"
+	meter2.column(2).cell.formula = "(Body["+str$(lid)+"].p.y)/(Body["+str$(rid)_
+	& "].p.x - Body["+str$(lid)+"].p.x - " _
+	& str$(2*W_WALL)+")"
+	meter2.column(3).cell.formula ="constraintforce("+str$(loscid)+").x/("+str$(H_OARENA)_
+	& "*(Body["+str$(rid)+"].p.x - Body["+str$(lid)+"].p.x -"+ str$(2*W_WALL)+"))"
+	meter2.column(4).cell.formula = oscFieldFormula
+	
+
+
+	'AREA = (H_OARENA)*(RWall.px.value - LWall.px.value - W_Wall)
+	'sigma = "constraintforce("+LTrim$(str$(loscid))+").x/("+str$(H_OARENA)_
+	'&"*( Body["+str$(rid)+"].p.x - Body["+str$(lid)+"].p.x" _
+	'& str$(2*W_WALL))+")
+	
+	'sigma
+	'Meter2.column(1).autoscale = false
+	'meter2.column(1).max = 10
+	'meter2.column(1).min = -10
+
+'============================EXPORT STUFF===================================
+	gosub ExportMedia
+Exit function
+
+'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%SUBS%%%%%%%%%%%%%%%%%%%%%%%%%%%
+'#############################################
+CreateWallsAndGrabbers:
+	Set LWall 		= doc.newbody("rectangle")
+	LWall.name 		= "Left Wall"
+	LWall.height.value	= H_LWall		
+	LWall.width.value	= W_WALL
+	
+	Set RWall 			= doc.newbody("rectangle")
+	RWall.name 			= "Right Wall"
+	RWall.height.value	= H_OARENA-.02'H_WALL-2.1*w_wall			'height of arena	
+	RWall.width.value	= W_WALL
+
+
+		'#############################################
+		'loop to create wall grabbers on left wall
+		For I = 1 to GRABBER_AMT
+			if makeGrabbers then
+				formula = "0 "
+				Set HGrab(I) 					= Doc.NewBody("rectangle")
+				'set HGrab(I).px.value			= LWall.px.value + 3*W_Wall/4
+				'set HGrab(I).py.value			= (H_WALL/(GRABBER_AMT+1))*I-(H_Wall)/2
+				set HGrab(I).name 				= "HGrab("+LTrim$(str$(I))+")"
+				set HGrab(I).height.value		= H_Hgrab
+				set HGrab(I).width.value		= W_Hgrab
+				set HGrab(I).mass.value			= M_GRAB
+				HGrab(I).elasticity.value		= ELAST
+				HGrab(I).kineticFriction.value	= FRICTION
+				HGrab(I).staticFriction.value	= FRICTION
+				
+				Set VGrab(I) 					= Doc.NewBody("rectangle")
+				Set VGrab(I).name				= "VGrab("+LTrim$(str$(I))+")"
+				Set VGrab(I).height.value		= H_VGrab
+				Set VGrab(I).width.value 		= W_VGrab
+				set VGrab(I).mass.value			= M_GRAB
+				VGrab(I).elasticity.value		= ELAST
+				VGrab(I).kineticFriction.value	= FRICTION
+				VGrab(I).StaticFriction.value	= FRICTION
+				
+				
+				Set grab_to_walljnt(I)			= doc.newconstraint("squarepin")
+				Set grab_to_walljnt(I).point(2).body 	= LWall
+				Set grab_to_walljnt(I).point(2).px.value	= 0
+				Set grab_to_walljnt(I).point(2).py.value	= (H_WALL/(GRABBER_AMT+1))*I-(H_WALL)/2
+				set grab_to_walljnt(I).point(1).body 		= Hgrab(I) 
+				Set grab_to_walljnt(I).point(1).px.value	= -(W_HGrab-W_Wall)/2
+				Set grab_to_walljnt(I).point(1).py.value	= 0
+				Set grab_to_walljnt(I).show		= SHOW_DETAILS
+
+				Set grabJnt(I) 			= Doc.newconstraint("squarepin")
+				Set grabJnt(I).point(1).body 		= HGrab(I)
+				Set grabJnt(I).point(1).px.value	= (W_HGrab-W_VGrab)/2
+				Set grabJnt(I).point(1).py.value	= 0
+				set grabJnt(I).point(2).body 		= VGrab(I)
+				Set grabJnt(I).point(2).px.value	= 0
+				Set grabJnt(I).point(2).py.value	= 0
+				Set grabJnt(I).show					= SHOW_DETAILS
+			end if
+			'================================Right wall grabbers=================================
+			if makeRGrabbers then
+				Set RHGrab(I) 					= Doc.NewBody("rectangle")
+				set RHGrab(I).name 				= "RHGrab("+LTrim$(str$(I))+")"
+				set RHGrab(I).height.value		= H_Hgrab
+				set RHGrab(I).width.value		= W_Hgrab
+				set RHGrab(I).mass.value		= M_GRAB
+				RHGrab(I).elasticity.value		= ELAST
+				RHGrab(I).kineticfriction.value	= FRICTION
+				RHGrab(I).StaticFriction.value	= FRICTION
+				
+				Set RVGrab(I) 					= Doc.NewBody("rectangle")
+				Set RVGrab(I).name				= "RVGrab("+LTrim$(str$(I))+")"
+				Set RVGrab(I).height.value		= H_VGrab
+				Set RVGrab(I).width.value 		= W_VGrab
+				set RVGrab(I).mass.value		= M_GRAB
+				RVGrab(I).elasticity.value		= ELAST
+				RVGrab(I).kineticfriction.value	= FRICTION
+				RVGrab(I).StaticFriction.value	= FRICTION
+				
+				
+				Set Rgrab_to_walljnt(I)			= doc.newconstraint("squarepin")
+				Set Rgrab_to_walljnt(I).point(2).body 	= RWall
+				Set Rgrab_to_walljnt(I).point(2).px.value	= 0
+				Set Rgrab_to_walljnt(I).point(2).py.value	= (H_WALL/(GRABBER_AMT+1))*I-(H_WALL)/2
+				set Rgrab_to_walljnt(I).point(1).body 		= RHgrab(I) 
+				Set Rgrab_to_walljnt(I).point(1).px.value	= (W_HGrab-W_Wall)/2
+				Set Rgrab_to_walljnt(I).point(1).py.value	= 0
+				Set Rgrab_to_walljnt(I).show				= SHOW_DETAILS
+
+				Set RgrabJnt(I) 			= Doc.newconstraint("squarepin")
+				Set RgrabJnt(I).point(1).body 		= RHGrab(I)
+				Set RgrabJnt(I).point(1).px.value	= -(W_HGrab-W_VGrab)/2
+				Set RgrabJnt(I).point(1).py.value	= 0
+				set RgrabJnt(I).point(2).body 		= RVGrab(I)
+				Set RgrabJnt(I).point(2).px.value	= 0
+				Set RgrabJnt(I).point(2).py.value	= 0
+				Set RgrabJnt(I).show				= SHOW_DETAILS
+			end if
+		Next
+	gosub walltrisub		
+	LWall.px.value 		= 0
+	LWall.py.value 		= -H_WALL/2
+	LWall.mass.value 	= M_WALL
+	LWall.kineticfriction.value		= FRICTION
+	LWall.StaticFriction.value		= FRICTION
+	LWall.elasticity.value			= ELAST
+	'Set RWall 			= doc.newbody("rectangle")
+	'RWall.name 			= "Right Wall"
+	
+	RWall.px.value 					= W_ARENA 			'width of arena
+	RWall.py.value 					= LWall.py.value
+	RWall.mass.value				= M_WALL
+	RWall.kineticfriction.value		= FRICTION
+	RWall.StaticFriction.value		= FRICTION
+	RWall.elasticity.value			= ELAST
+	'RWall.height.value	= H_WALL-2.1*w_wall			'height of arena	
+	'RWall.width.value	= W_WALL
+	
+	'Set RWallpt			= doc.newpoint("anchor")
+	'Set RWallpt.body	= RWall
+	
+	Set TWall			= doc.newbody("rectangle")
+	TWall.name 			= "Top Wall"
+	TWall.px.value		= LWall.Px.Value+W_Arena/2
+	TWall.py.value		= LWall.py.value+(H_wall-W_Wall)/2
+	TWall.height.value	= W_Wall
+	TWall.width.value	= W_Arena-W_Wall*1.1
+	TWall.kineticfriction.value		= FRICTION
+	TWall.StaticFriction.value		= FRICTION
+	TWall.elasticity.value			= ELAST
+	
+	set BWall			= doc.newbody("rectangle")
+	BWall.name 			= "Bottom Wall"
+	BWall.px.value		= TWall.px.value
+	BWall.py.value		= LWall.py.value+(W_wall-H_Wall)/2
+	BWall.height.value	= W_Wall
+	BWall.width.value	= W_Arena-W_Wall*1.1
+	BWall.kineticfriction.value		= FRICTION
+	BWall.StaticFriction.value		= FRICTION
+	BWall.elasticity.value			= ELAST
+	
+	Set TWallpt			= doc.newpoint("anchor")
+	Set tWallpt.body	= TWall
+	Set bWallpt			= doc.newpoint("anchor")
+	Set bWallpt.body	= BWall
+	return
+
+
+GiveLWallForce:
+	Set WallForce = Doc.NewConstraint("Force") 
+	Set WallForce.Point(1).body= Lwall
+	WallForce.point(1).py.value = -H_WALL/2+H_WALL/16
+	WallForce.AlwaysActive=True
+	WallForce.fy.formula="50*cos(3*t+Pi)"
+	WallForce.fx.value=0
+	return
+
+
+MakeRWallHSlot:
+  	Set RWallSlot = Doc.NewConstraint("KeyedHSlot")
+	Set RWallSlot.point(1).body 	= RWall
+	RWallSlot.point(1).px.value		= RWall.px.value	
+	RWallSlot.point(1).py.value	 	= RWall.py.value	
+	RWallSlot.point(2).px.value 	= 0
+	RWallSlot.point(2).py.value 	= LWall.py.value
+	RWallSlot.show					= SHOW_DETAILS
+	return
+
+	
+SetupRWallPushing:
+	Set RWallSquare 					= Doc.NewBody("square")
+	RWallSquare.width.Value 			= 2
+	RWallSquare.px.value 				= RWall.px.value + 5
+	RWallSquare.py.value				= RWall.py.value
+		
+	Set SquareSlot 						= Doc.NewConstraint("KeyedHSlot")
+	Set SquareSlot.point(2).Body		= RWallSquare
+	squareSlot.point(1).py.value		= RwallSquare.py.value
+	SquareSlot.point(2).py.value		= 0
+	squareslot.show						= SHOW_DETAILS
+
+	
+	Set RWallPusher 					= doc.newConstraint("Actuator")
+	RWallPusher.name 					= "RWall pusher"
+	set RWallPusher.point(1).body 		= RWallSquare
+	set RWallPusher.point(2).body		= RWall	
+	RWallPusher.ActuatorType			= "velocity"
+	
+	'RWallPusher.point(1).px.value		= RWall.px.value +5
+	'RWallPusher.point(1).py.value		= RWall.py.value 
+	
+	Set RWallMeasure					= Doc.NewConstraint("springdamper")
+	RWallmeasure.name					= "RWall Measure"
+	RWallmeasure.k.value				= RWallSPRING_K	 'SPRING K
+	RWallmeasure.DamperK.value			= RWallSpring_B	 'SPRING B
+	set RWallmeasure.point(1).body		= RWallSquare
+	set RWallMeasure.point(2).px.value	= RWallSquare.px.value + 5
+	set RWallMeasure.point(2).py.value	= RWallSquare.py.value
+	RWallMeasure.length.value			= RWallMeasure.CurrentLength
+	return
+
+PushRWallTowardsLWall:	
+	'RWallPusher.Field.Formula			= "1*(t<15) + 1*(t>15 and t<18)"	
+	'RWallPusher.Field.Formula			= "1*(t< ("+LTrim$(str$(W_OARENA))+"*"+LTrim$(str$(WALL_MOVE_DISTANCE))+")"
+	RWallPusher.Field.Formula			= "1*(t< ("+LTrim$(str$(W_OARENA))+"*"+LTrim$(str$(WALL_MOVE_DISTANCE))+"))"
+	return
+
+
+StaggeredRWallPush:
+	'stepspd = .5
+	'stepAMT=4
+	'waitframes = 50
+	VConstMoveFrames = fix(WALL_MOVE_DISTANCE*W_OARENA*(1/SPF)/RWall_spd)
+	StepStart = fix(.75*VConstMoveFrames) 'percent of distance to go fullspeed for
+	
+	stepD = fix((VConstMoveFrames-StepStart)*(RWall_Spd/stepSpd)/(stepAmt)) 'gives me frame amount for steps (x2 since half are steps half 0)
+	stepCount = 0
+	waitCount = 0
+	totalSteps = 0
+	
+	'RWallPusher.Field.Formula			= "1*(t< ("+LTrim$(str$(W_OARENA))+"*"+LTrim$(str$(WALL_MOVE_DISTANCE))+"))"
+	'RWallPusher.Field.Formula			= ""+str$(timestepMove(frame()))+""
+	stag = str$(RWall_spd)+"*(t<="+str$(StepStart*(spf))+")"
+	for i = 1 to 2*stepamt
+		if i<= stepamt then
+			stag= stag+"+"+str$(StepSpd)+"*(t>="+str$((spf)*(StepStart+i*waitFrames+(i-1)*stepD))+")*(t<="+str$((spf)*(StepStart+i*waitFrames+i*stepD))+")"
+		'else   '%%%%%%%% turn on for moving wall BACKWARDS
+		'	stag= stag+"+"+str$(-StepSpd)+"*(t>="+str$((spf)*(StepStart+i*waitFrames+(i-1)*stepD))+")*(t<="+str$((spf)*(StepStart+i*waitFrames+i*stepD))+")"'
+		end if
+	next
+	RWallPusher.Field.Formula			= stag
+	'msgbox(stag)
+	return
+
+
+
+GiveLWallVelocity:
+	set WallOscillator 					= doc.newConstraint("Actuator")
+	WallOscillator.name	 				= "LWall Oscillator"	
+	set WallOscillator.point(2).body 	= LWall
+	WallOscillator.ActuatorType 		= "velocity"
+	WallOscillator.point(1).py.value 	= -3*H_Wall
+	WallOscillator.point(2).py.value 	= -H_LWALL/2
+	amp_max = fix(triwidth/2.6*10)/10
+	'msgbox(amp_max)
+	waitTime = (spf)*(StepStart+Stepamt*waitFrames+Stepamt*stepD)
+	lwallmass = walltri(1).mass.value*num_tri+LWall.mass.value
+	'waitTime = 0
+	oscFieldFormula = str$(amp_max/wall_freq)+"*cos("+str$(WALL_FREQ)+"*(t-"+str$(waitTime)+"))*(t>="+str$(waitTime)+")"
+	WallOscillator.Field.Formula 			=  oscFieldFormula
+	walloscLen = wallOscillator.currentlength
+	'msgbox(walloscLen)
+
+	return
+
+listFiles:
+	'filenames = My.Computer.FileSystem.GetFiles("D:\wkMdl_scripts\Output\", FileIO.SearchOption.SearchTopLevelOnly, "*.txt")
+	dim maxnum as integer
+	Dim res as String
+	'For Each fileName in fileNames
+	
+	'GET FILE NUMBERS IN DIRECTORY!
+	Dim fl()
+	FileList fl,"D:\wkMdl_scripts\Output\data*.txt"
+	ArraySort fl
+	maxnum =ubound(fl)+1
+	
+return		
+ExportMedia:
+	while runNumber <= runTotal
+		doc.run FRAMES
+		if EXPORT = 1 then
+			doc.reset
+			doc.SelectAll False
+			Doc.Select Meter1
+			Doc.ExportStartFrame = 0
+			Doc.ExportStopFrame = FRAMES
+			gosub listFiles
+			outputFile = LTrim$("D:\wkMdl_scripts\Output\data" &str$(maxnum) &".txt")
+			wmFile = LTrim$("D:\wkMdl_scripts\Output\wm"& str$(maxnum) &".wm")
+			Doc.ExportMeterData outputFile
+			Doc.SaveAs wmFile, True
+
+			if Motors_on then
+				mout = 1
+			else
+				mout = 0
+			end if
+			
+			if lparts then
+				lout = 1
+			else
+				lout = 0
+			end if
+			Open outputFile For Append Access Write As #1
+			writeString = "mass" & Chr(9) &str$(lwallmass) &_
+			Chr(9)& "waittime" & Chr(9)&str$(waittime/spf)&_
+			Chr(9)& "woarena"& Chr(9) &str$(W_OARENA) & Chr(9)& "h_oarena"& Chr(9) &str$(h_oarena) &_
+			chr(9)& "wall_percent" & Chr(9) & str$(wallpercent) &_
+			chr(9)& "wallfreq" & Chr(9) & str$(wall_freq) &_
+			chr(9)& "num_body" & Chr(9) &str$(NUM_BODY) &_
+			chr(9)& "amp_max" & Chr(9) &str$(amp_max) &_
+			chr(9)& "spring_b" & Chr(9) &str$(spring_b)&_
+			chr(9)& "spring_k" & Chr(9) &str$(spring_k)&_
+			chr(9)& "MOTORS_ON" & Chr(9) &str$(mout)&_
+			chr(9)& "lparts" & Chr(9) &str$(lout)
+			write #1, writestring
+			
+			close
+			doc.reset	
+		end if
+		RunNumber = RunNumber+1
+		
+	wend
+	return
+
+
+ConnectLRBarbCircles:
+	Set LBarbCircleJt(j).point(1).body			= LBarbCircle(j)
+	Set LBarbCircleJt(j).point(2).body			= LBarb(j)
+	Set LBarbCircleJt(j).point(2).px.value		= 0
+	Set LBarbCircleJt(j).point(2).py.value		= LBarb(j).height.value/2
+	Set LBarbCircleJt(j).show					= SHOW_DETAILS
+	LBarbCircleJt(j).name						= "LBarbCircleJt("+LTrim$(str$(j))+")"
+'	Doc.select LBarb(j), true
+'	Doc.select LBarbCircle(j), true
+'	Doc.Collide False
+'	Doc.selectall false
+	
+	'rbarb circle
+	'========always sets these parameters 
+	if lparts then 
+		Set RBarbCircleJt(j).point(1).body			= RBarbCircle(j)
+		Set	RBarbCircleJt(j).point(2).body			= UBott(j)
+		Set	RBarbCircleJt(j).point(2).px.value		= W_UBOTT/2
+		Set	RBarbCircleJt(j).point(2).py.value		= 0
+		Set	RBarbCircleJt(j).show					= SHOW_DETAILS 
+		RBarbCircleJt(j).name						= "RBarbCircleJt("+LTrim$(str$(j))+")"
+	else
+		Set RBarbCircleJt(j).point(1).body			= RBarbCircle(j)
+		Set	RBarbCircleJt(j).point(2).body			= RBarb(j)
+		Set	RBarbCircleJt(j).point(2).px.value		= 0
+		Set	RBarbCircleJt(j).point(2).py.value		= RBarb(j).height.value/2
+		Set	RBarbCircleJt(j).show					= SHOW_DETAILS
+		RBarbCircleJt(j).name						= "RBarbCircleJt("+LTrim$(str$(j))+")"
+	end if
+
+
+
+	return
+
+
+Make_frame_array:
+	'stepspd = .5
+	'stepAMT=4
+	'waitframes = 50
+	VConstMoveFrames = fix(WALL_MOVE_DISTANCE*W_OARENA*(1/SPF)/RWall_spd)
+	StepStart = fix(.7*VConstMoveFrames) 'percent of distance to go fullspeed for
+	
+	stepD = fix((VConstMoveFrames-StepStart)*(RWall_Spd/stepSpd)/(stepAmt)) 'gives me frame amount for steps (x2 since half are steps half 0)
+	stepCount = 0
+	waitCount = 0
+	totalSteps = 0
+	for i = 1 to frames
+		if i < StepStart then
+			timestepMove(i) = RWall_spd
+			totalSteps = totalSteps+1
+		else
+			'msgbox(totalSteps)
+			if totalSteps = VConstMoveFrames then
+				timestepMove(i) = 0
+			else
+				if StepCount < stepD then
+					timestepMove(i) = RWall_spd
+					stepCount = stepCount+1
+					totalSteps = totalSteps+1
+				elseif stepCount = stepD then
+					timestepMove(i) = 0
+					waitcount = waitCount+1
+					if waitcount = waitframes then
+						stepCount = 0
+						waitCount = 0
+					end if
+				end if
+			end if
+		end if		
+	next
+	'msgbox("totalSteps:"+str$(totalSteps)+"constwallmoveframeend:"+str$(VConstMoveFrames)+" StepStart:" + str$(StepStart)+" stepD:" + str$(stepD))
+	return
+
+makeCornerTri:
+	Set Top_Tri = Doc.NewBody("polygon")
+	
+	Top_Tri.px.value = 0
+	Top_Tri.py.value = 0
+	Top_Tri.AddVertex 1, W_WALL/2			, -W_WALL
+	Top_Tri.AddVertex 2, W_WALL/2			, -2*W_Wall
+	Top_Tri.AddVertex 3, W_WALL/2+W_WALL	, -W_WALL
+	'Top_Tri.AddVertex 4, W_WALL/2+W_WALL	, -2*W_WALL
+	
+	Top_Tri.DeleteVertex 7
+	Top_Tri.DeleteVertex 6 ' delete three default vertices
+	Top_Tri.DeleteVertex 5
+	Top_Tri.DeleteVertex 4
+	
+	Set top_tri_pt		= doc.newpoint("anchor")
+	Set top_tri_pt.body	= top_tri
+	
+	
+	Set Bott_Tri = Doc.NewBody("polygon")
+	BOTT_Tri.px.value = 0
+	BOTT_Tri.py.value = 0
+	Bott_Tri.AddVertex 1, W_WALL/2			, BWALL.py.value+W_WALL/2
+	Bott_Tri.AddVertex 2, W_WALL/2			, BWALL.py.value+ 3/2*W_WALL
+	Bott_Tri.AddVertex 3, W_WALL/2 +W_WALL	, BWALL.py.value+W_WALL/2
+	'Bott_Tri.AddVertex 4, W_WALL/2 +W_WALL	, BWALL.py.value-W_WALL/2 - W_WALL
+	
+	Bott_Tri.DeleteVertex 7 ' delete three default vertices
+	Bott_Tri.DeleteVertex 6
+	Bott_Tri.DeleteVertex 5
+	Bott_Tri.DeleteVertex 4
+	
+	Set Bott_Tri_pt			= doc.newpoint("anchor")
+	Set Bott_Tri_pt.body	= Bott_Tri
+	return
+
+
+walltrisub:
+	
+	'tri_height= w_wall
+	triwidth = RWall.height.value/(num_tri+1)
+
+	if oscTri then
+			triwidth = RWall.height.value/(num_tri+1)
+			
+			for i = 1 to num_tri
+				Set walltri(i) 					= Doc.NewBody("polygon")
+				walltri(i).px.value					= -W_wall/2
+				walltri(i).py.value					= -W_WALL-triwidth*(i) 'middle of tri	
+				walltri(i).name						= "walltri"&str$(i)
+
+				walltri(i).AddVertex 1, 0			, triwidth/2		'top of tri against wall
+				walltri(i).AddVertex 2, 0			, -triwidth/2			'bott of tri against wall
+				walltri(i).AddVertex 3, tri_height	, 0	'height of tri away from wall
+				
+				walltri(i).DeleteVertex 7
+				walltri(i).DeleteVertex 6 ' delete three default vertices
+				walltri(i).DeleteVertex 5
+				walltri(i).DeleteVertex 4
+				
+				walltri(i).staticfriction.value		= FRICTION
+				walltri(i).kineticfriction.value	= FRICTION
+				walltri(i).elasticity.value			= ELAST
+				walltri(i).mass.value				= tri_mass
+				
+				Set Tri_jnts(i)						= Doc.newconstraint("squarepin")
+				Set Tri_jnts(i).point(2).body 		= LWall
+				Tri_jnts(i).point(2).px.value		= W_wall/2
+				Tri_jnts(i).point(2).py.value		= H_OARENA/2-triwidth*(i)
+				Set Tri_jnts(i).point(1).body 		= walltri(i)
+				Tri_jnts(i).point(1).px.value		= 0
+				Tri_jnts(i).point(1).py.value		= 0	
+				tri_jnts(i).show					= SHOW_DETAILS
+			next			
+		end if
+		
+	if leftWallTri and not oscTri then 
+		triwidth = H_OARENA/(num_tri)
+		Dim walltri_pt(num_tri) as WMPoint
+		
+		Set Top_Tri = Doc.NewBody("polygon")
+		top_tri.name = "top_tri"
+		Top_Tri.px.value = W_wall/2
+		Top_Tri.py.value = -W_Wall 'point on this triangle is at vertex 1
+		Top_Tri.AddVertex 1, 0				, 0
+		Top_Tri.AddVertex 2, 0				, -triwidth/2
+		Top_Tri.AddVertex 3, tri_height		, 0
+		
+		Top_Tri.DeleteVertex 7
+		Top_Tri.DeleteVertex 6 ' delete three default vertices
+		Top_Tri.DeleteVertex 5
+		Top_Tri.DeleteVertex 4
+		
+		top_tri.staticfriction.value		= FRICTION
+		top_tri.kineticfriction.value		= FRICTION
+		top_tri.elasticity.value			= ELAST
+		top_tri.mass.value					= tri_mass/2
+			
+		Set top_tri_pt		= doc.newpoint("anchor")
+		Set top_tri_pt.body	= top_tri
+		
+		
+		Set Bott_Tri = Doc.NewBody("polygon")
+		Bott_tri.name = "bott_tri"
+		BOTT_Tri.px.value = W_Wall/2
+		BOTT_Tri.py.value =  -H_OARENA-w_wall  'vertex 2 is triangle point
+		Bott_Tri.AddVertex 1, 0				, triwidth/2 
+		Bott_Tri.AddVertex 2, 0				, 0 
+		Bott_Tri.AddVertex 3, tri_height	, 0
+		
+		Bott_Tri.DeleteVertex 7 ' delete three default vertices
+		Bott_Tri.DeleteVertex 6
+		Bott_Tri.DeleteVertex 5
+		Bott_Tri.DeleteVertex 4
+		
+		bott_tri.staticfriction.value		= FRICTION
+		bott_tri.kineticfriction.value		= FRICTION
+		bott_tri.elasticity.value			= ELAST
+		bott_tri.mass.value					= tri_mass/2
+		
+		Set Bott_Tri_pt			= doc.newpoint("anchor")
+		Set Bott_Tri_pt.body	= Bott_Tri
+		
+		for i = 2 to num_tri
+			Set walltri(i) 					= Doc.NewBody("polygon")
+			walltri(i).name						= "walltri"&str$(i)
+			walltri(i).px.value					= W_wall/2
+			walltri(i).py.value					= -W_WALL-triwidth*(i-1) 'middle of tri
+			
+			walltri(i).AddVertex 1, 0			, triwidth/2		'top of tri against wall
+			walltri(i).AddVertex 2, 0			, -triwidth/2			'bott of tri against wall
+			walltri(i).AddVertex 3, tri_height	, 0	'height of tri away from wall
+		
+			walltri(i).DeleteVertex 7
+			walltri(i).DeleteVertex 6 ' delete three default vertices
+			walltri(i).DeleteVertex 5
+			walltri(i).DeleteVertex 4
+			
+			walltri(i).staticfriction.value		= FRICTION
+			walltri(i).kineticfriction.value	= FRICTION
+			walltri(i).elasticity.value			= ELAST
+			walltri(i).mass.value				= tri_mass
+			
+			Set walltri_pt(i)					= doc.newpoint("anchor")
+			Set walltri_pt(i).body				= walltri(i)
+
+		next
+	end if
+'%%%%%%%%%%%%%% right wall pieces	
+	if rightWallTri then 
+		triwidth = H_OARENA/(num_tri)
+		Set RTop_Tri = Doc.NewBody("polygon")
+		Rtop_tri.name = "Rtop_tri"
+		RTop_Tri.px.value = RWall.px.value- W_wall/2  'MOVE TO RIGHTWALL
+		RTop_Tri.py.value = -W_Wall 'point on this triangle is at vertex 1
+		RTop_Tri.AddVertex 1, 0				, 0
+		RTop_Tri.AddVertex 2, 0				, -triwidth/2
+		RTop_Tri.AddVertex 3, -tri_height		, 0
+		
+		RTop_Tri.DeleteVertex 7
+		RTop_Tri.DeleteVertex 6 ' delete three default vertices
+		RTop_Tri.DeleteVertex 5
+		RTop_Tri.DeleteVertex 4
+		
+		Rtop_tri.staticfriction.value		= FRICTION
+		Rtop_tri.kineticfriction.value		= FRICTION
+		Rtop_tri.elasticity.value			= ELAST
+		Rtop_tri.mass.value					= tri_mass/2
+			
+		Set RTri_jnts(1)				= Doc.newconstraint("squarepin")
+		Set RTri_jnts(1).point(2).body 			= RWall
+		RTri_jnts(1).point(2).px.value			= -W_wall/2
+		RTri_jnts(1).point(2).py.value			= H_OARENA/2
+		Set RTri_jnts(1).point(1).body 			= Rtop_tri
+		RTri_jnts(1).point(1).px.value			= 0
+		RTri_jnts(1).point(1).py.value			= 0
+		RTri_jnts(1).show						= SHOW_DETAILS
+		
+		Set RBott_Tri = Doc.NewBody("polygon")
+		RBott_tri.name = "Rbott_tri"
+		RBOTT_Tri.px.value = RWall.px.value -W_wall/2
+		RBOTT_Tri.py.value =  -H_OARENA-w_wall 'vertex 2 is triangle point
+		RBott_Tri.AddVertex 1, 0				, triwidth/2
+		RBott_Tri.AddVertex 2, 0				, 0 
+		RBott_Tri.AddVertex 3, -tri_height	, 0
+		
+		RBott_Tri.DeleteVertex 7 ' delete three default vertices
+		RBott_Tri.DeleteVertex 6
+		RBott_Tri.DeleteVertex 5
+		RBott_Tri.DeleteVertex 4
+		
+		Rbott_tri.staticfriction.value		= FRICTION
+		Rbott_tri.kineticfriction.value		= FRICTION
+		Rbott_tri.elasticity.value			= ELAST
+		Rbott_tri.mass.value				= 1/2*tri_mass
+		
+		Set RTri_jnts(num_tri+1)				= Doc.newconstraint("squarepin")
+		Set RTri_jnts(num_tri+1).point(2).body 			= RWall
+		RTri_jnts(num_tri+1).point(2).px.value			= -W_wall/2
+		RTri_jnts(num_tri+1).point(2).py.value			= -H_OARENA/2
+		Set RTri_jnts(num_tri+1).point(1).body 			= Rbott_tri
+		RTri_jnts(num_tri+1).point(1).px.value			= 0
+		RTri_jnts(num_tri+1).point(1).py.value			= 0
+		RTri_jnts(num_tri+1).show						= SHOW_DETAILS
+		
+		for i = 2 to num_tri
+			Set Rwalltri(i) 					= Doc.NewBody("polygon")
+			Rwalltri(i).name						= "Rwalltri"&str$(i)
+			Rwalltri(i).px.value					= RWall.px.value -W_wall/2
+			Rwalltri(i).py.value					= -W_WALL-triwidth*(i-1)-.02 'middle of tri
+			
+			Rwalltri(i).AddVertex 1, 0			, triwidth/2		'top of tri against wall
+			Rwalltri(i).AddVertex 2, 0			, -triwidth/2			'bott of tri against wall
+			Rwalltri(i).AddVertex 3, -tri_height	, 0	'height of tri away from wall
+		
+			Rwalltri(i).DeleteVertex 7
+			Rwalltri(i).DeleteVertex 6 ' delete three default vertices
+			Rwalltri(i).DeleteVertex 5
+			Rwalltri(i).DeleteVertex 4
+			
+			Rwalltri(i).staticfriction.value		= FRICTION
+			Rwalltri(i).kineticfriction.value		= FRICTION
+			Rwalltri(i).elasticity.value			= ELAST
+			Rwalltri(i).mass.value 					= tri_mass
+			
+			
+			Set RTri_jnts(i)						= Doc.newconstraint("squarepin")
+			Set RTri_jnts(i).point(2).body 			= RWall
+			RTri_jnts(i).point(2).px.value			= -W_wall/2
+			RTri_jnts(i).point(2).py.value			= H_OARENA/2-triwidth*(i-1)
+			Set RTri_jnts(i).point(1).body 			= Rwalltri(i)
+			RTri_jnts(i).point(1).px.value			= 0
+			RTri_jnts(i).point(1).py.value			= 0
+			RTri_jnts(i).show						= SHOW_DETAILS
+			
+		next
+	end if
+
+return
+End function
+
+
+'******************DEPRECATED CODE************************
+'=======old only motor and barb config no springs===========
+'		Set LMotor(j).Point(1).Body = LBarb(j)
+'		Set LMotor(j).Point(2).Body = UBott(j)
+'		Set RMotor(j).Point(1).Body = RBarb(j)
+'		Set RMotor(j).Point(2).Body = UBott(j)
+'		
+'		LMotor(j).Point(1).px.value=0
+'		LMotor(j).Point(1).py.value=-(H_BARB-H_UBOTT)/2
+'		LMotor(j).Point(2).px.value=(W_Barb-W_UBOTT)/2
+'		LMotor(j).Point(2).py.value=0
+'		
+'		RMotor(j).Point(1).px.value=0
+'		RMotor(j).Point(1).py.value=-(H_BARB-H_UBOTT)/2
+'		RMotor(j).Point(2).px.value=-(W_Barb-W_UBOTT)/2
+'		RMotor(j).Point(2).py.value=0
